@@ -173,14 +173,29 @@ bool AFLCoverage::runOnModule(Module &M) {
       CurId += 1;
 
       if (BB.size() > 2) {
-        auto it = BB.end();
+        auto It = BB.end();
         u32 IsConditionalBr = 0;
-        --it;
-        if (BranchInst* BR = dyn_cast<BranchInst>(&(*it))) {
+        --It;
+        if (BranchInst* BR = dyn_cast<BranchInst>(&(*It))) {
           IsConditionalBr = BR->isConditional();
         }
-        --it;
-        if (ICmpInst *ICMP = dyn_cast<ICmpInst>(&(*it))) {
+        if (SwitchInst* SI = dyn_cast<SwitchInst>(&(*It))) {
+          IRBuilder<> IRB(&(*SI));
+          FunctionCallee Insert = M.getOrInsertFunction("insert_distance", VoidTy, Int32Ty, Int32Ty, Int32Ty);
+          Value *Cond = SI->getCondition();
+          if (Cond->getType()->getScalarSizeInBits() <= Int32Ty->getScalarSizeInBits()) {
+            u32 Inc = 0;
+            for (auto It : SI->cases()) {
+              Constant *CaseVal = It.getCaseValue();
+              Value* Distance = IRB.CreateXor(Cond, CaseVal);
+              Value* Case = ConstantInt::get(Int32Ty, Inc);
+              IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, Distance });
+              Inc += 1;
+            }
+          }
+        }
+        --It;
+        if (ICmpInst *ICMP = dyn_cast<ICmpInst>(&(*It))) {
           if (IsConditionalBr) {
             IRBuilder<> IRB(&(*ICMP));
             Value* A0 = ICMP->getOperand(0);
@@ -199,7 +214,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       FunctionCallee Insert = M.getOrInsertFunction("insert_block", VoidTy, Int32Ty);
       IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId) });
-      // errs() << BB;
+      errs() << BB;
     }
 
   /* Say something nice. */
