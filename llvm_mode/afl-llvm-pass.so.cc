@@ -37,6 +37,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/IRBuilder.h"
@@ -74,6 +77,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   LLVMContext &C = M.getContext();
 
+  Type *VoidTy = Type::getVoidTy(C);
   IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
   IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
 
@@ -104,12 +108,19 @@ bool AFLCoverage::runOnModule(Module &M) {
      __afl_prev_loc is thread-local. */
 
   GlobalVariable *AFLMapPtr =
-      new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
-                         GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
+    new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
+        GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
 
   GlobalVariable *AFLPrevLoc = new GlobalVariable(
       M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc",
       0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
+
+  /* Open file to read id */
+
+  u32 CurId = 0;
+  s32 Fd  = open("/tmp/.cur_id", O_RDWR | O_CREAT, 0600);;
+  if (Fd < 0) PFATAL("Unable to create /tmp/.cur_id");
+  if (read(Fd, &CurId, 4) < 4) PFATAL("Short read /tmp/.cur_id");
 
   /* Instrument all the things! */
 
@@ -133,7 +144,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       LoadInst *PrevLoc = IRB.CreateLoad(AFLPrevLoc);
       PrevLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-      Value *PrevLocCasted = IRB.CreateZExt(PrevLoc, IRB.getInt32Ty());
+      Value *PrevLocCasted = IRB.CreateZExt(PrevLoc, Int32Ty);
 
       /* Load SHM pointer */
 
@@ -158,6 +169,37 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       inst_blocks++;
 
+      /* TODO */
+      CurId += 1;
+
+      if (BB.size() > 2) {
+        auto it = BB.end();
+        u32 IsConditionalBr = 0;
+        --it;
+        if (BranchInst* BR = dyn_cast<BranchInst>(&(*it))) {
+          IsConditionalBr = BR->isConditional();
+        }
+        --it;
+        if (ICmpInst *ICMP = dyn_cast<ICmpInst>(&(*it))) {
+          if (IsConditionalBr) {
+            IRBuilder<> IRB(&(*ICMP));
+            Value* A0 = ICMP->getOperand(0);
+            Value* A1 = ICMP->getOperand(1);
+            if (A0->getType()->isIntegerTy()) {
+              if (A0->getType()->getScalarSizeInBits() <= Int32Ty->getScalarSizeInBits()) {
+                Value* Distance = IRB.CreateXor(A0, A1);
+                FunctionCallee Insert = M.getOrInsertFunction("insert_distance", VoidTy, Int32Ty, Int32Ty, Int32Ty);
+                Value* Case = ConstantInt::get(Int32Ty, 0);
+                IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, Distance });
+              }
+            }
+          }
+        }
+      }
+
+      FunctionCallee Insert = M.getOrInsertFunction("insert_block", VoidTy, Int32Ty);
+      IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId) });
+      // errs() << BB;
     }
 
   /* Say something nice. */
@@ -171,6 +213,10 @@ bool AFLCoverage::runOnModule(Module &M) {
               "ASAN/MSAN" : "non-hardened"), inst_ratio);
 
   }
+
+  lseek(Fd, 0, SEEK_SET);
+  if (write(Fd, &CurId, 4) < 4) PFATAL("Short write .cur_id");
+  close(Fd);
 
   return true;
 
