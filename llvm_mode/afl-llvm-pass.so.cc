@@ -185,13 +185,19 @@ bool AFLCoverage::runOnModule(Module &M) {
           Value *Cond = SI->getCondition();
           if (Cond->getType()->getScalarSizeInBits() <= Int32Ty->getScalarSizeInBits()) {
             u32 Inc = 0;
+            Value* L = ConstantInt::get(Int32Ty, 0);
             for (auto It : SI->cases()) {
               Constant *CaseVal = It.getCaseValue();
               Value* Distance = IRB.CreateXor(Cond, CaseVal);
               Value* Case = ConstantInt::get(Int32Ty, Inc);
               IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, Distance });
+              Value* OnOff = IRB.CreateICmpNE(Distance, ConstantInt::get(Int32Ty, 0));
+              L = IRB.CreateAdd(L, OnOff);
               Inc += 1;
             }
+            L = IRB.CreateSub(ConstantInt::get(Int32Ty, SI->getNumCases()), L);
+            Value* Case = ConstantInt::get(Int32Ty, Inc);
+            IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, L });
           }
         }
         --It;
@@ -214,7 +220,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       FunctionCallee Insert = M.getOrInsertFunction("insert_block", VoidTy, Int32Ty);
       IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId) });
-      errs() << BB;
+      // errs() << BB;
     }
 
   /* Say something nice. */
