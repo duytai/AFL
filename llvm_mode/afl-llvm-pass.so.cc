@@ -184,20 +184,38 @@ bool AFLCoverage::runOnModule(Module &M) {
           FunctionCallee Insert = M.getOrInsertFunction("insert_distance", VoidTy, Int32Ty, Int32Ty, Int32Ty);
           Value *Cond = SI->getCondition();
           if (Cond->getType()->getScalarSizeInBits() <= Int32Ty->getScalarSizeInBits()) {
+            /* Convert label to Index */
+            u32 NumCases = SI->getNumCases() + 1;
+            u32 Labels[NumCases];
+            u32 CurLabel = 1;
+            memset(Labels , 0, sizeof(u32) * NumCases);
+            for (u32 I = 0; I < NumCases; I += 1) {
+              u32 Updated = false;
+              for (u32 J = 0; J < NumCases; J += 1) {
+                Value* A0 = SI->getOperand(1 + 2 * I);
+                Value* A1 = SI->getOperand(1 + 2 * J);
+                if (A0 == A1 && !Labels[J]) {
+                  Labels[J] = CurLabel;
+                  Updated = true;
+                }
+              }
+              if (Updated) CurLabel += 1;
+            }
+            /* Save distance */
+            Value* DefaultDis = ConstantInt::get(Int32Ty, 0);
             u32 Inc = 0;
-            Value* L = ConstantInt::get(Int32Ty, 0);
             for (auto It : SI->cases()) {
               Constant *CaseVal = It.getCaseValue();
               Value* Distance = IRB.CreateXor(Cond, CaseVal);
-              Value* Case = ConstantInt::get(Int32Ty, Inc);
+              Value* Case = ConstantInt::get(Int32Ty, Labels[Inc + 1]);
               IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, Distance });
-              Value* OnOff = IRB.CreateICmpNE(Distance, ConstantInt::get(Int32Ty, 0));
-              L = IRB.CreateAdd(L, OnOff);
+              Value* NotCovered = IRB.CreateICmpNE(Distance, ConstantInt::get(Int32Ty, 0));
+              DefaultDis = IRB.CreateAdd(DefaultDis, NotCovered);
               Inc += 1;
             }
-            L = IRB.CreateSub(ConstantInt::get(Int32Ty, SI->getNumCases()), L);
-            Value* Case = ConstantInt::get(Int32Ty, Inc);
-            IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, L });
+            DefaultDis = IRB.CreateSub(ConstantInt::get(Int32Ty, SI->getNumCases()), DefaultDis);
+            Value* Case = ConstantInt::get(Int32Ty, Labels[0]);
+            IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, DefaultDis });
           }
         }
         --It;
@@ -210,8 +228,8 @@ bool AFLCoverage::runOnModule(Module &M) {
               if (A0->getType()->getScalarSizeInBits() <= Int32Ty->getScalarSizeInBits()) {
                 Value* Distance = IRB.CreateXor(A0, A1);
                 FunctionCallee Insert = M.getOrInsertFunction("insert_distance", VoidTy, Int32Ty, Int32Ty, Int32Ty);
-                Value* Case = ConstantInt::get(Int32Ty, 0);
-                IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, Distance });
+                Value* Zero = ConstantInt::get(Int32Ty, 0);
+                IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Zero, Distance });
               }
             }
           }
