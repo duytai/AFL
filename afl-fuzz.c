@@ -66,6 +66,8 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <sys/file.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>	
 
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
 #  include <sys/sysctl.h>
@@ -229,6 +231,8 @@ static u64 total_bitmap_size,         /* Total bit count for all bitmaps  */
            total_bitmap_entries;      /* Number of bitmaps counted        */
 
 static s32 cpu_core_count;            /* CPU core count                   */
+
+static int socket_fd;                 /* Connect to sNeu                  */
 
 #ifdef HAVE_AFFINITY
 
@@ -1363,6 +1367,18 @@ static void cull_queue(void) {
     q = q->next;
   }
 
+}
+
+void setup_socket(void) {
+  struct sockaddr_in server;
+  socket_fd = socket(AF_INET , SOCK_STREAM , 0);
+  if (socket_fd < 0) PFATAL("socket() failed");
+  server.sin_addr.s_addr = inet_addr("127.0.0.1");
+  server.sin_family = AF_INET;
+  server.sin_port = htons(65432);
+  /* make a connection */
+  if (connect(socket_fd, (struct sockaddr *)&server , sizeof(server)) < 0) PFATAL("connect() failed");
+  OKF("Connected to sNeu");
 }
 
 
@@ -5011,6 +5027,7 @@ static u8 fuzz_one(char** argv) {
 
   u8  a_collect[MAX_AUTO_EXTRA];
   u32 a_len = 0;
+  u32 grad_access = 0;
 
 #ifdef IGNORE_FINDS
 
@@ -5146,14 +5163,18 @@ static u8 fuzz_one(char** argv) {
      this entry ourselves (was_fuzzed), or if it has gone through deterministic
      testing in earlier, resumed runs (passed_det). */
 
-  if (skip_deterministic || queue_cur->was_fuzzed || queue_cur->passed_det)
-    goto havoc_stage;
+  if (skip_deterministic || queue_cur->was_fuzzed || queue_cur->passed_det) {
+    grad_access = 1;
+    goto gradient_stage;
+  }
 
   /* Skip deterministic fuzzing if exec path checksum puts this out of scope
      for this master instance. */
 
-  if (master_max && (queue_cur->exec_cksum % master_max) != master_id - 1)
-    goto havoc_stage;
+  if (master_max && (queue_cur->exec_cksum % master_max) != master_id - 1) {
+    grad_access = 1;
+    goto gradient_stage;
+  }
 
   doing_det = 1;
 
@@ -6111,6 +6132,41 @@ skip_extras:
      in the .state/ directory. */
 
   if (!queue_cur->passed_det) mark_as_det_done(queue_cur);
+
+gradient_stage:
+
+  if (grad_access) {
+    u32 top_k[1024];
+
+    /* send test to server */
+    if (send(socket_fd, out_buf, len, 0) < 0) FATAL("send() failed");
+    /* wait for important loc */
+
+    if (recv(socket_fd, top_k, sizeof(top_k), 0) < 0) FATAL("recv() failed");
+
+    /* mutate according to gradient */
+    stage_name  = "gradient 1/1";
+    stage_short = "grad";
+    stage_cur   = 0;
+    stage_max   = 256 * top_k[0];
+
+    for (int val = 0; val < 256; val ++) {
+      for (size_t idx = 1; idx <= top_k[0]; idx ++) {
+        
+        if (UR(10) < 5) {
+          u8 temp = out_buf[idx];
+          out_buf[idx] = val;
+
+          if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+
+          out_buf[idx] = temp;
+        }
+        stage_cur ++;
+      }
+    }
+  }
+
+  grad_access = 0;
 
   /****************
    * RANDOM HAVOC *
@@ -8087,6 +8143,8 @@ int main(int argc, char** argv) {
     start_time += 4000;
     if (stop_soon) goto stop_fuzzing;
   }
+
+  setup_socket();
 
   while (1) {
 
