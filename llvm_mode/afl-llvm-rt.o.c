@@ -60,6 +60,12 @@
 u8  __afl_area_initial[MAP_SIZE];
 u8* __afl_area_ptr = __afl_area_initial;
 
+u32 __afl_block_initial[MAP_SIZE];
+u32* __afl_block_ptr = __afl_block_initial;
+
+u32 __afl_distance_initial[MAP_SIZE];
+u32* __afl_distance_ptr = __afl_distance_initial;
+
 __thread u32 __afl_prev_loc;
 
 
@@ -92,6 +98,8 @@ static void __afl_map_shm(void) {
        our parent doesn't give up on us. */
 
     __afl_area_ptr[0] = 1;
+    __afl_block_ptr = (u32*) (__afl_area_ptr + MAP_SIZE);
+    __afl_distance_ptr = (u32*) (__afl_block_ptr + MAP_SIZE);
 
   }
 
@@ -311,4 +319,57 @@ void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
 
   }
 
+}
+
+void insert_distance(u32 cur_id, u32 _case, u32 distance) {
+  u32 one_third = (MAP_SIZE / 3);
+  u32 hash = cur_id % one_third;
+  u32 *data = __afl_distance_ptr;
+  
+  while (1) {
+    u32 i = hash * 3;
+    u32 j = i + 1;
+    u32 k = j + 1;
+
+    /* distance is recorded */
+    if (data[i] == cur_id && data[j] == _case) {
+      if (distance < data[k]) data[k] = distance;
+      break;
+    }
+    /* new distance */
+    if (!data[i]) {
+      data[i] = cur_id;
+      data[j] = _case;
+      data[k] = distance;
+      break;
+    }
+
+    hash = (hash + 1) % one_third;
+  }
+}
+
+void insert_block(u32 cur_id) {
+
+  u32 half = (MAP_SIZE - 2) / 2;
+  u32 prev_id = __afl_block_ptr[0] ? __afl_block_ptr[0] : 1;
+  u32* data = __afl_block_ptr + 2;
+
+  u32 hash = (prev_id + cur_id) % half;
+
+  while (1) {
+    u32 i = hash * 2;
+    u32 j = i + 1;
+    /* edge is recored */
+    if (data[i] == prev_id && data[j] == cur_id)
+      break;
+    /* new edge */
+    if (!data[i]) {
+      data[i] = prev_id;
+      data[j] = cur_id;
+      break;
+    }
+    hash = (hash + 1) % half;
+  }
+
+  __afl_block_ptr[0] = cur_id;
 }

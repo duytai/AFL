@@ -34,6 +34,21 @@ int main(int argc, char** argv) {
     printf("Hum?\n");
     exit(1);
   }
+  switch(buf[0]) {
+    case '0':
+      printf("%d", buf[0]);
+      break;
+    case '1':
+      printf("%d", buf[0]);
+      break;
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+      printf("%d", buf[0]);
+      break;
+  }
 
   if (buf[0] == '0')
     printf("Looks like a zero to me!\n");
