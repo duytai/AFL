@@ -80,6 +80,7 @@ bool AFLCoverage::runOnModule(Module &M) {
   Type *VoidTy = Type::getVoidTy(C);
   IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
   IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
+  IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
 
   /* Show a banner */
 
@@ -183,7 +184,7 @@ bool AFLCoverage::runOnModule(Module &M) {
           IRBuilder<> IRB(&(*SI));
           FunctionCallee Insert = M.getOrInsertFunction("insert_distance", VoidTy, Int32Ty, Int32Ty, Int32Ty);
           Value *Cond = SI->getCondition();
-          if (Cond->getType()->getScalarSizeInBits() <= Int32Ty->getScalarSizeInBits()) {
+          if (Cond->getType()->getScalarSizeInBits() <= Int64Ty->getScalarSizeInBits()) {
             /* Convert label to Index */
             u32 NumCases = SI->getNumCases() + 1;
             u32 Labels[NumCases];
@@ -207,6 +208,7 @@ bool AFLCoverage::runOnModule(Module &M) {
             for (auto It : SI->cases()) {
               Constant *CaseVal = It.getCaseValue();
               Value* Distance = IRB.CreateXor(Cond, CaseVal);
+              Distance = IRB.CreateIntCast(Distance, Int32Ty, false);
               Value* Case = ConstantInt::get(Int32Ty, Labels[Inc + 1]);
               IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Case, Distance });
               Value* NotCovered = IRB.CreateICmpNE(Distance, ConstantInt::get(Int32Ty, 0));
@@ -225,8 +227,9 @@ bool AFLCoverage::runOnModule(Module &M) {
             Value* A0 = ICMP->getOperand(0);
             Value* A1 = ICMP->getOperand(1);
             if (A0->getType()->isIntegerTy()) {
-              if (A0->getType()->getScalarSizeInBits() <= Int32Ty->getScalarSizeInBits()) {
+              if (A0->getType()->getScalarSizeInBits() <= Int64Ty->getScalarSizeInBits()) {
                 Value* Distance = IRB.CreateXor(A0, A1);
+                Distance = IRB.CreateIntCast(Distance, Int32Ty, false);
                 FunctionCallee Insert = M.getOrInsertFunction("insert_distance", VoidTy, Int32Ty, Int32Ty, Int32Ty);
                 Value* Zero = ConstantInt::get(Int32Ty, 0);
                 IRB.CreateCall(Insert, { ConstantInt::get(Int32Ty, CurId), Zero, Distance });
