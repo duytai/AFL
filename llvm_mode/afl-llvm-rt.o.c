@@ -60,8 +60,8 @@
 u8  __afl_area_initial[MAP_SIZE];
 u8* __afl_area_ptr = __afl_area_initial;
 
-u8  __afl_uc_initial[MAP_SIZE];
-u8* __afl_uc_ptr = __afl_uc_initial;
+u32  __afl_uc_initial[MAP_SIZE];
+u32* __afl_uc_ptr = __afl_uc_initial;
 
 __thread u32 __afl_prev_loc;
 
@@ -95,7 +95,7 @@ static void __afl_map_shm(void) {
        our parent doesn't give up on us. */
 
     if (getenv("SNEU_UC")) {
-      __afl_uc_ptr = (u8*)(__afl_area_ptr + MAP_SIZE);
+      __afl_uc_ptr = (u32*)(__afl_area_ptr + MAP_SIZE);
     }
     __afl_area_ptr[0] = 1;
 

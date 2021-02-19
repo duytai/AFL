@@ -38,6 +38,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <set>
+#include <vector>
 
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/IRBuilder.h"
@@ -109,7 +110,7 @@ bool AFLCoverage::runOnModule(Module &M) {
                          GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
 
   GlobalVariable *AFLUCPtr =
-      new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
+      new GlobalVariable(M, PointerType::get(Int32Ty, 0), false,
                          GlobalValue::ExternalLinkage, 0, "__afl_uc_ptr");
 
   GlobalVariable *AFLPrevLoc = new GlobalVariable(
@@ -172,7 +173,7 @@ bool AFLCoverage::runOnModule(Module &M) {
       auto T = BB.getTerminator();
       if (T->getNumSuccessors() >= 2) {
         u32 CurId = 0, NextId = 0;
-        BasicBlock::iterator IP = BB.getFirstInsertionPt();
+        BasicBlock::iterator IP = --BB.end();
         IRBuilder<> IRB(&(*IP));
         for (auto &Inst : BB) {
           if (BinaryOperator* OP = dyn_cast<BinaryOperator>(&Inst)) {
@@ -187,6 +188,34 @@ bool AFLCoverage::runOnModule(Module &M) {
         if (Visited.count(CurId) > 0) break;
         Visited.insert(CurId);
 
+        std::vector<Value*> XorDists;
+        auto It = --BB.end();
+        if (SwitchInst* SI = dyn_cast<SwitchInst>(&(*It))) {
+          Value* A0 = SI->getCondition();
+          if (A0->getType()->getScalarSizeInBits() <= 64) {
+            XorDists.push_back(ConstantInt::get(Int32Ty, 1));
+            for (auto Case : SI->cases()) {
+              Value* A1 = Case.getCaseValue();
+              Value* A2 = IRB.CreateXor(A0, A1);
+              XorDists.push_back(A2);
+            }
+          }
+        }
+        --It;
+        if (ICmpInst *ICMP = dyn_cast<ICmpInst>(&(*It))) {
+          Value* A0 = ICMP->getOperand(0);
+          Value* A1 = ICMP->getOperand(1);
+          if (A0->getType()->getScalarSizeInBits() <= 64
+              && A1->getType()->getScalarSizeInBits() <= 64) {
+            Value* A2 = IRB.CreateXor(A0, A1);
+            XorDists.push_back(A2);
+            XorDists.push_back(A2);
+          }
+        }
+
+        if (XorDists.size() != T->getNumSuccessors()) break;
+
+        LoadInst *UCPtr = NULL;
         for (auto Idx = 0; Idx < T->getNumSuccessors(); Idx += 1) {
           auto Suc = T->getSuccessor(Idx);
           for (auto &Inst : *Suc) {
@@ -200,10 +229,12 @@ bool AFLCoverage::runOnModule(Module &M) {
           }
           if (CurId && NextId) {
             ConstantInt *CurLoc = ConstantInt::get(Int32Ty, (CurId >> 1) ^ NextId);
-            LoadInst *UCPtr = IRB.CreateLoad(AFLUCPtr);
-            UCPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+            if (UCPtr == NULL) {
+              UCPtr = IRB.CreateLoad(AFLUCPtr);
+              UCPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+            }
             Value *UCPtrIdx = IRB.CreateGEP(UCPtr, CurLoc);
-            IRB.CreateStore(ConstantInt::get(Int8Ty, 1), UCPtrIdx)
+            IRB.CreateStore(XorDists[Idx], UCPtrIdx)
               ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
           }
         }
