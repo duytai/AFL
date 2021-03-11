@@ -75,6 +75,7 @@ char AFLCoverage::ID = 0;
 bool AFLCoverage::runOnModule(Module &M) {
 
   LLVMContext &C = M.getContext();
+  const DataLayout &DL = M.getDataLayout();
 
   IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
   IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
@@ -172,6 +173,10 @@ bool AFLCoverage::runOnModule(Module &M) {
    * */
   std::set<u32> Visited;
 
+  auto IntptrTy = Type::getIntNTy(C, DL.getPointerSizeInBits());
+  auto Strcmp = M.getOrInsertFunction("__afl_strcmp", Int32Ty, IntptrTy, IntptrTy);
+  auto Strncmp = M.getOrInsertFunction("__afl_strncmp", Int32Ty, IntptrTy, IntptrTy, Int32Ty);
+
   for (auto &F: M)
     for (auto &BB: F) {
       auto T = BB.getTerminator();
@@ -207,13 +212,38 @@ bool AFLCoverage::runOnModule(Module &M) {
         }
         --It;
         if (ICmpInst *ICMP = dyn_cast<ICmpInst>(&(*It))) {
-          Value* A0 = ICMP->getOperand(0);
-          Value* A1 = ICMP->getOperand(1);
-          if (A0->getType()->getScalarSizeInBits() <= 64
-              && A1->getType()->getScalarSizeInBits() <= 64) {
-            Value* A2 = IRB.CreateXor(A0, A1);
-            XorDists.push_back(A2);
-            XorDists.push_back(A2);
+          --It;
+          bool Saved = false;
+          if (CallInst *CALL = dyn_cast<CallInst>(&(*It))) {
+            if (Function* Func = CALL->getCalledFunction()) {
+              if (Func->getName() == "strcmp") {
+                Value* A0 = CALL->getArgOperand(0);
+                Value* A1 = CALL->getArgOperand(1);
+                Value* A2 = IRB.CreateCall(Strcmp, { A0, A1 });
+                XorDists.push_back(A2);
+                XorDists.push_back(A2);
+                Saved = true;
+              }
+              if (Func->getName() == "strncmp") {
+                Value* A0 = CALL->getArgOperand(0);
+                Value* A1 = CALL->getArgOperand(1);
+                Value* A2 = CALL->getArgOperand(2);
+                Value* A3 = IRB.CreateCall(Strncmp, { A0, A1, A2 });
+                XorDists.push_back(A3);
+                XorDists.push_back(A3);
+                Saved = true;
+              }
+            }
+          }
+          if (!Saved) {
+            Value* A0 = ICMP->getOperand(0);
+            Value* A1 = ICMP->getOperand(1);
+            if (A0->getType()->getScalarSizeInBits() <= 64
+                && A1->getType()->getScalarSizeInBits() <= 64) {
+              Value* A2 = IRB.CreateXor(A0, A1);
+              XorDists.push_back(A2);
+              XorDists.push_back(A2);
+            }
           }
         }
 
