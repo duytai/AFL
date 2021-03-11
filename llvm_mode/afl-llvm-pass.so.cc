@@ -166,6 +166,10 @@ bool AFLCoverage::runOnModule(Module &M) {
 
     }
 
+  /*
+   * This is added to store xor distance
+   * of covered and uncovered branches
+   * */
   std::set<u32> Visited;
 
   for (auto &F: M)
@@ -216,6 +220,7 @@ bool AFLCoverage::runOnModule(Module &M) {
         if (XorDists.size() != T->getNumSuccessors()) break;
 
         LoadInst *UCPtr = NULL;
+        Value *PrevLocCasted = NULL;
         for (auto Idx = 0; Idx < T->getNumSuccessors(); Idx += 1) {
           auto Suc = T->getSuccessor(Idx);
           for (auto &Inst : *Suc) {
@@ -228,7 +233,14 @@ bool AFLCoverage::runOnModule(Module &M) {
             }
           }
           if (CurId && NextId) {
-            ConstantInt *CurLoc = ConstantInt::get(Int32Ty, (CurId >> 1) ^ NextId);
+            // A block can jump to another block and jump back through call instruction.
+            // Thefore, we load AFLPrevLoc instead of using CurId
+            if (PrevLocCasted == NULL) {
+              LoadInst *PrevLoc = IRB.CreateLoad(AFLPrevLoc);
+              PrevLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+              PrevLocCasted = IRB.CreateZExt(PrevLoc, IRB.getInt32Ty());
+            }
+            auto CurLoc = IRB.CreateXor(PrevLocCasted, ConstantInt::get(Int32Ty, NextId));
             if (UCPtr == NULL) {
               UCPtr = IRB.CreateLoad(AFLUCPtr);
               UCPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
