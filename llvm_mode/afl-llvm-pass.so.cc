@@ -220,11 +220,9 @@ bool AFLCoverage::runOnModule(Module &M) {
         if (BranchInst* BR = dyn_cast<BranchInst>(&(*It))) {
           Value *A0 = BR->getCondition();
           Instruction *Inst = NULL;
-          Value* Val = NULL;
 
           if (!Inst) Inst = dyn_cast<ICmpInst>(A0);
           if (!Inst) Inst = dyn_cast<BinaryOperator>(A0);
-          // TODO: precisely detect function call
           if (Inst) {
             std::vector<Value*> tmps;
             for (auto Idx = 0; Idx < 2; Idx += 1) {
@@ -251,39 +249,15 @@ bool AFLCoverage::runOnModule(Module &M) {
             Value* A0 = IRB.CreateXor(tmps[0], tmps[1]);
             XorDists.push_back(A0);
             XorDists.push_back(A0);
-          } else {
-            if (!Inst) Inst = dyn_cast<CallInst>(A0);
-            if (Inst) {
-              XorDists.push_back(Inst);
-              XorDists.push_back(Inst);
-            } else {
-              // TODO: measure distance
-              if (!Inst) Inst = dyn_cast<FCmpInst>(A0);
-              if (!Inst) Inst = dyn_cast<PHINode>(A0);
-              if (!Inst) Inst = dyn_cast<SelectInst>(A0);
-              if (Inst) {
-                XorDists.push_back(ConstantInt::get(Int32Ty, 0));
-                XorDists.push_back(ConstantInt::get(Int32Ty, 0));
-              }
-            }
-          }
-
-          if (!Val) Val = dyn_cast<ConstantInt>(A0);
-          if (Val) {
-            XorDists.push_back(ConstantInt::get(Int32Ty, 0));
-            XorDists.push_back(ConstantInt::get(Int32Ty, 0));
-          }
-
-          if (!Inst && !Val) {
-            errs() << BB << "\n";
-            assert(false);
           }
         }
 
-        if(XorDists.size() != T->getNumSuccessors()) {
-          errs() << T->getNumSuccessors() << "|num\n";
-          errs() << BB << "\n";
-          assert(false);
+        // Fallback
+        if (XorDists.size() != T->getNumSuccessors()) {
+          XorDists.clear();
+          for (auto Idx = 0; Idx < T->getNumSuccessors(); Idx += 1) {
+            XorDists.push_back(ConstantInt::get(Int32Ty, 0));
+          }
         }
 
         LoadInst *UCPtr = NULL;
