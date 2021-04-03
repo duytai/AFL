@@ -213,10 +213,7 @@ bool AFLCoverage::runOnModule(Module &M) {
             }
           }
         }
-        if (InvokeInst* Invoke = dyn_cast<InvokeInst>(&(*It))) {
-          XorDists.push_back(ConstantInt::get(Int32Ty, 0));
-          XorDists.push_back(ConstantInt::get(Int32Ty, 0));
-        }
+
         if (BranchInst* BR = dyn_cast<BranchInst>(&(*It))) {
           Value *A0 = BR->getCondition();
           Instruction *Inst = NULL;
