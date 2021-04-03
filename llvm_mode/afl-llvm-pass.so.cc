@@ -181,7 +181,7 @@ bool AFLCoverage::runOnModule(Module &M) {
     for (auto &BB: F) {
       auto T = BB.getTerminator();
       if (T->getNumSuccessors() >= 2) {
-        u32 CurId = 0, NextId = 0;
+        u32 CurId = (1 << 16) + 1, NextId = (1 << 16) + 1;
         BasicBlock::iterator IP = --BB.end();
         IRBuilder<> IRB(&(*IP));
         for (auto &Inst : BB) {
@@ -194,11 +194,14 @@ bool AFLCoverage::runOnModule(Module &M) {
           }
         }
 
-        if (Visited.count(CurId) > 0) break;
+        assert(CurId != (1 << 16) + 1);
+        if (Visited.count(CurId) > 0) continue;
         Visited.insert(CurId);
 
         std::vector<Value*> XorDists;
         auto It = --BB.end();
+
+        /* Last instruction of block */
         if (SwitchInst* SI = dyn_cast<SwitchInst>(&(*It))) {
           Value* A0 = SI->getCondition();
           if (A0->getType()->getScalarSizeInBits() <= 64) {
@@ -210,44 +213,78 @@ bool AFLCoverage::runOnModule(Module &M) {
             }
           }
         }
-        --It;
-        if (ICmpInst *ICMP = dyn_cast<ICmpInst>(&(*It))) {
-          --It;
-          bool Saved = false;
-          if (CallInst *CALL = dyn_cast<CallInst>(&(*It))) {
-            if (Function* Func = CALL->getCalledFunction()) {
-              if (Func->getName() == "strcmp") {
-                Value* A0 = CALL->getArgOperand(0);
-                Value* A1 = CALL->getArgOperand(1);
-                Value* A2 = IRB.CreateCall(Strcmp, { A0, A1 });
-                XorDists.push_back(A2);
-                XorDists.push_back(A2);
-                Saved = true;
+        if (InvokeInst* Invoke = dyn_cast<InvokeInst>(&(*It))) {
+          XorDists.push_back(ConstantInt::get(Int32Ty, 0));
+          XorDists.push_back(ConstantInt::get(Int32Ty, 0));
+        }
+        if (BranchInst* BR = dyn_cast<BranchInst>(&(*It))) {
+          Value *A0 = BR->getCondition();
+          Instruction *Inst = NULL;
+          Value* Val = NULL;
+
+          if (!Inst) Inst = dyn_cast<ICmpInst>(A0);
+          if (!Inst) Inst = dyn_cast<BinaryOperator>(A0);
+          // TODO: precisely detect function call
+          if (Inst) {
+            std::vector<Value*> tmps;
+            for (auto Idx = 0; Idx < 2; Idx += 1) {
+              Value* A0 = Inst->getOperand(Idx);
+              if (CallInst *CALL = dyn_cast<CallInst>(A0)) {
+                if (Function* Func = CALL->getCalledFunction()) {
+                  if (Func->getName() == "strcmp") {
+                    A0 = IRB.CreateCall(Strcmp, {
+                      CALL->getArgOperand(0),
+                      CALL->getArgOperand(1)
+                    });
+                  }
+                  if (Func->getName() == "strncmp") {
+                    A0 = IRB.CreateCall(Strncmp, {
+                      CALL->getArgOperand(0),
+                      CALL->getArgOperand(1),
+                      CALL->getArgOperand(2)
+                    });
+                  }
+                }
               }
-              if (Func->getName() == "strncmp") {
-                Value* A0 = CALL->getArgOperand(0);
-                Value* A1 = CALL->getArgOperand(1);
-                Value* A2 = CALL->getArgOperand(2);
-                Value* A3 = IRB.CreateCall(Strncmp, { A0, A1, A2 });
-                XorDists.push_back(A3);
-                XorDists.push_back(A3);
-                Saved = true;
+              tmps.push_back(A0);
+            }
+            Value* A0 = IRB.CreateXor(tmps[0], tmps[1]);
+            XorDists.push_back(A0);
+            XorDists.push_back(A0);
+          } else {
+            if (!Inst) Inst = dyn_cast<CallInst>(A0);
+            if (Inst) {
+              XorDists.push_back(Inst);
+              XorDists.push_back(Inst);
+            } else {
+              // TODO: measure distance
+              if (!Inst) Inst = dyn_cast<FCmpInst>(A0);
+              if (!Inst) Inst = dyn_cast<PHINode>(A0);
+              if (!Inst) Inst = dyn_cast<SelectInst>(A0);
+              if (Inst) {
+                XorDists.push_back(ConstantInt::get(Int32Ty, 0));
+                XorDists.push_back(ConstantInt::get(Int32Ty, 0));
               }
             }
           }
-          if (!Saved) {
-            Value* A0 = ICMP->getOperand(0);
-            Value* A1 = ICMP->getOperand(1);
-            if (A0->getType()->getScalarSizeInBits() <= 64
-                && A1->getType()->getScalarSizeInBits() <= 64) {
-              Value* A2 = IRB.CreateXor(A0, A1);
-              XorDists.push_back(A2);
-              XorDists.push_back(A2);
-            }
+
+          if (!Val) Val = dyn_cast<ConstantInt>(A0);
+          if (Val) {
+            XorDists.push_back(ConstantInt::get(Int32Ty, 0));
+            XorDists.push_back(ConstantInt::get(Int32Ty, 0));
+          }
+
+          if (!Inst && !Val) {
+            errs() << BB << "\n";
+            assert(false);
           }
         }
 
-        if (XorDists.size() != T->getNumSuccessors()) break;
+        if(XorDists.size() != T->getNumSuccessors()) {
+          errs() << T->getNumSuccessors() << "|num\n";
+          errs() << BB << "\n";
+          assert(false);
+        }
 
         LoadInst *UCPtr = NULL;
         Value *PrevLocCasted = NULL;
@@ -262,7 +299,7 @@ bool AFLCoverage::runOnModule(Module &M) {
               }
             }
           }
-          if (CurId && NextId) {
+          if (CurId != (1 << 16) + 1 && NextId != (1 << 16) + 1) {
             // A block can jump to another block and jump back through call instruction.
             // Thefore, we load AFLPrevLoc instead of using CurId
             if (PrevLocCasted == NULL) {
@@ -278,6 +315,8 @@ bool AFLCoverage::runOnModule(Module &M) {
             Value *UCPtrIdx = IRB.CreateGEP(UCPtr, CurLoc);
             IRB.CreateStore(XorDists[Idx], UCPtrIdx)
               ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+          } else {
+            assert(false && "CurId && NextId");
           }
         }
       }
