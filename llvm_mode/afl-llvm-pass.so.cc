@@ -128,7 +128,7 @@ bool AFLCoverage::runOnModule(Module &M) {
       BasicBlock::iterator IP = BB.getFirstInsertionPt();
       IRBuilder<> IRB(&(*IP));
 
-      if (AFL_R(100) >= inst_ratio) continue;
+      if (AFL_R(100) >= inst_ratio) break;
 
       /* Make up cur_loc */
 
@@ -181,7 +181,7 @@ bool AFLCoverage::runOnModule(Module &M) {
     for (auto &BB: F) {
       auto T = BB.getTerminator();
       if (T->getNumSuccessors() >= 2) {
-        u32 CurId = (1 << 16) + 1, NextId = (1 << 16) + 1;
+        u32 CurId = 0, NextId = 0;
         BasicBlock::iterator IP = --BB.end();
         IRBuilder<> IRB(&(*IP));
         for (auto &Inst : BB) {
@@ -194,8 +194,7 @@ bool AFLCoverage::runOnModule(Module &M) {
           }
         }
 
-        assert(CurId != (1 << 16) + 1);
-        if (Visited.count(CurId) > 0) continue;
+        if (Visited.count(CurId) > 0) break;
         Visited.insert(CurId);
 
         std::vector<Value*> XorDists;
@@ -204,13 +203,11 @@ bool AFLCoverage::runOnModule(Module &M) {
         /* Last instruction of block */
         if (SwitchInst* SI = dyn_cast<SwitchInst>(&(*It))) {
           Value* A0 = SI->getCondition();
-          if (A0->getType()->getScalarSizeInBits() <= 64) {
-            XorDists.push_back(ConstantInt::get(Int32Ty, 1));
-            for (auto Case : SI->cases()) {
-              Value* A1 = Case.getCaseValue();
-              Value* A2 = IRB.CreateXor(A0, A1);
-              XorDists.push_back(A2);
-            }
+          XorDists.push_back(ConstantInt::get(Int32Ty, 1));
+          for (auto Case : SI->cases()) {
+            Value* A1 = Case.getCaseValue();
+            Value* A2 = IRB.CreateXor(A0, A1);
+            XorDists.push_back(A2);
           }
         }
 
@@ -255,7 +252,7 @@ bool AFLCoverage::runOnModule(Module &M) {
           for (auto Idx = 0; Idx < T->getNumSuccessors(); Idx += 1) {
             XorDists.push_back(ConstantInt::get(Int32Ty, 0));
           }
-        }
+        };
 
         LoadInst *UCPtr = NULL;
         Value *PrevLocCasted = NULL;
@@ -270,7 +267,7 @@ bool AFLCoverage::runOnModule(Module &M) {
               }
             }
           }
-          if (CurId != (1 << 16) + 1 && NextId != (1 << 16) + 1) {
+          if (CurId && NextId) {
             // A block can jump to another block and jump back through call instruction.
             // Thefore, we load AFLPrevLoc instead of using CurId
             if (PrevLocCasted == NULL) {
@@ -286,8 +283,6 @@ bool AFLCoverage::runOnModule(Module &M) {
             Value *UCPtrIdx = IRB.CreateGEP(UCPtr, CurLoc);
             IRB.CreateStore(XorDists[Idx], UCPtrIdx)
               ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-          } else {
-            assert(false && "CurId && NextId");
           }
         }
       }
