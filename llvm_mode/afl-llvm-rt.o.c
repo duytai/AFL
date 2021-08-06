@@ -320,36 +320,19 @@ void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
 }
 
 /* Here we capture distance between string
- * Max string len = 256
+ * Max string len = 128
  * */
 u32 __afl_strncmp(char* x, char* y, u32 len) {
-
-  char a[256] = {0}, b[256] = {0};
   u32 total = 0;
-  u32 x_len = strlen(x);
-  u32 y_len = strlen(y);
-
-  if (x_len > 256 || y_len > 256) return -1;
-  memcpy(a, x, x_len);
-  memcpy(b, y, y_len);
-  for (u32 i = 0; i < 256 && i < len; i += 1)
-    total += (a[i] ^ b[i]);
-
+  for (u32 i = 0; i < 128 && i < len && x[i] != NULL && y[i] != NULL; i += 1) {
+    total += (u8)(x[i] ^ y[i]);
+  }
   return total;
 }
 
 u32 __afl_strcmp(char* x, char* y) {
-
-  char a[256] = {0}, b[256] = {0};
   u32 total = 0;
-  u32 x_len = strlen(x);
-  u32 y_len = strlen(y);
-
-  if (x_len > 256 || y_len > 256) return -1;
-  memcpy(a, x, x_len);
-  memcpy(b, y, y_len);
-  for (u32 i = 0; i < 256 && (i < x_len || i < y_len); i += 1)
-    total += (a[i] ^ b[i]);
-
+  for (u32 i = 0; i < 128 && x[i] != NULL && y[i] != NULL; i += 1)
+    total += (u8)(x[i] ^ y[i]);
   return total;
 }
