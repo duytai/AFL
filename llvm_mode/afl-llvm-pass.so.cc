@@ -223,18 +223,11 @@ bool AFLCoverage::runOnModule(Module &M) {
               Value* A0 = Inst->getOperand(Idx);
               if (CallInst *CALL = dyn_cast<CallInst>(A0)) {
                 if (Function* Func = CALL->getCalledFunction()) {
-                  if (Func->getName() == "strcmp") {
-                    A0 = IRB.CreateCall(Strcmp, {
-                      CALL->getArgOperand(0),
-                      CALL->getArgOperand(1)
-                    });
-                  }
-                  if (Func->getName() == "strncmp") {
-                    A0 = IRB.CreateCall(Strncmp, {
-                      CALL->getArgOperand(0),
-                      CALL->getArgOperand(1),
-                      CALL->getArgOperand(2)
-                    });
+                  if (Func->getName() == "strcmp" || Func->getName() == "strncmp") {
+                    A0 = IRB.CreateXor(
+                      IRB.CreateZExt(CALL->getArgOperand(0), IRB.getInt64Ty()),
+                      IRB.CreateZExt(CALL->getArgOperand(1), IRB.getInt64Ty())
+                    );
                   }
                 }
               }

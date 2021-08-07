@@ -318,21 +318,3 @@ void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
   }
 
 }
-
-/* Here we capture distance between string
- * Max string len = 128
- * */
-u32 __afl_strncmp(char* x, char* y, u32 len) {
-  u32 total = 0;
-  for (u32 i = 0; i < 128 && i < len && x[i] != NULL && y[i] != NULL; i += 1) {
-    total += (u8)(x[i] ^ y[i]);
-  }
-  return total;
-}
-
-u32 __afl_strcmp(char* x, char* y) {
-  u32 total = 0;
-  for (u32 i = 0; i < 128 && x[i] != NULL && y[i] != NULL; i += 1)
-    total += (u8)(x[i] ^ y[i]);
-  return total;
-}
