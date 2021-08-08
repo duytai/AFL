@@ -46,6 +46,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -215,9 +216,14 @@ bool AFLCoverage::runOnModule(Module &M) {
           Value *A0 = BR->getCondition();
           Instruction *Inst = NULL;
 
-          if (!Inst) Inst = dyn_cast<ICmpInst>(A0);
-          if (!Inst) Inst = dyn_cast<BinaryOperator>(A0);
-          if (Inst) {
+          if (
+            (Inst = dyn_cast<ICmpInst>(A0)) || 
+            (Inst = dyn_cast<BinaryOperator>(A0)) ||
+            (
+             (Inst = dyn_cast<SelectInst>(A0)) && 
+             (Inst = dyn_cast<ICmpInst>(Inst->getOperand(0)))
+            )
+          ) {
             std::vector<Value*> tmps;
             for (auto Idx = 0; Idx < 2; Idx += 1) {
               Value* A0 = Inst->getOperand(Idx);
@@ -236,16 +242,23 @@ bool AFLCoverage::runOnModule(Module &M) {
             Value* A0 = IRB.CreateXor(tmps[0], tmps[1]);
             XorDists.push_back(A0);
             XorDists.push_back(A0);
+          } else if ((Inst = dyn_cast<FCmpInst>(A0))) {
+            Inst = dyn_cast<FCmpInst>(A0);
+            Value* A0 = Inst->getOperand(0);
+            Value* A1 = Inst->getOperand(1);
+            A0 = IRB.CreateFPToSI(A0, IRB.getInt64Ty());
+            A1 = IRB.CreateFPToSI(A1, IRB.getInt64Ty());
+            A0 = IRB.CreateXor(A0, A1);
+            XorDists.push_back(A0);
+            XorDists.push_back(A0);
+          } else {
+            // TODO: phi node
+            errs() << "[LOG] "<< *A0 << "\n";
           }
         }
 
         // Fallback
-        if (XorDists.size() != T->getNumSuccessors()) {
-          XorDists.clear();
-          for (auto Idx = 0; Idx < T->getNumSuccessors(); Idx += 1) {
-            XorDists.push_back(ConstantInt::get(Int32Ty, 0));
-          }
-        };
+        if (XorDists.size() != T->getNumSuccessors()) continue;
 
         LoadInst *UCPtr = NULL;
         Value *PrevLocCasted = NULL;
